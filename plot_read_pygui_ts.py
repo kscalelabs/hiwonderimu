@@ -98,7 +98,6 @@ def update_buffers(ser, start_time):
             quat_q1_buf.append(x)
             quat_q2_buf.append(y)
             quat_q3_buf.append(z)
-            # project gravity in world frame
             r = Rotation.from_quat([x, y, z, w])
             gx, gy, gz = r.apply([0, 0, -1])
             grav_t_buf.append(t)
@@ -112,53 +111,66 @@ dpg.create_context()
 with dpg.window(label="IMU Visualization", width=2500, height=1250):
     with dpg.table(header_row=False, resizable=True, policy=dpg.mvTable_SizingStretchProp):
         for _ in range(4): dpg.add_table_column()
-        # first row: Orientation 3D, Gravity 3D, RPY, Accel
+        # first row
         with dpg.table_row():
-            # orientation axes
+            # Orientation 3D
             with dpg.drawlist(width=PLOT_WIDTH, height=PLOT_HEIGHT):
                 with dpg.draw_layer(tag="ori_layer", depth_clipping=True, perspective_divide=True, cull_mode=dpg.mvCullMode_None):
                     with dpg.draw_node(tag="axis_x"): dpg.draw_line([0,0,0],[1,0,0], color=[255,0,0,255], thickness=4)
                     with dpg.draw_node(tag="axis_y"): dpg.draw_line([0,0,0],[0,1,0], color=[0,255,0,255], thickness=4)
                     with dpg.draw_node(tag="axis_z"): dpg.draw_line([0,0,0],[0,0,1], color=[0,0,255,255], thickness=4)
-            # gravity vector
+            # Gravity 3D
             with dpg.drawlist(width=PLOT_WIDTH, height=PLOT_HEIGHT):
                 with dpg.draw_layer(tag="grav_layer", depth_clipping=True, perspective_divide=True, cull_mode=dpg.mvCullMode_None):
                     with dpg.draw_node(tag="gvec"): dpg.draw_line([0,0,0],[0,0,-1], color=[255,255,0,255], thickness=4)
             # RPY timeseries
-            with dpg.plot(label="RPY (°)", width=PLOT_WIDTH, height=PLOT_HEIGHT):
+            rpy_tag = "rpy_plot"
+            with dpg.plot(label="RPY (°)", tag=rpy_tag, width=PLOT_WIDTH, height=PLOT_HEIGHT):
                 dpg.add_plot_axis(dpg.mvXAxis, tag="rpy_x", label="Time")
                 ay = dpg.add_plot_axis(dpg.mvYAxis, tag="rpy_y", label="°")
                 dpg.add_line_series([], [], label="Roll", parent=ay, tag="roll_s")
                 dpg.add_line_series([], [], label="Pitch", parent=ay, tag="pitch_s")
                 dpg.add_line_series([], [], label="Yaw", parent=ay, tag="yaw_s")
+                dpg.add_plot_legend(parent=rpy_tag)
             # Accel timeseries
-            with dpg.plot(label="Accel (g)", width=PLOT_WIDTH, height=PLOT_HEIGHT):
+            acc_tag = "acc_plot"
+            with dpg.plot(label="Accel (g)", tag=acc_tag, width=PLOT_WIDTH, height=PLOT_HEIGHT):
                 dpg.add_plot_axis(dpg.mvXAxis, tag="acc_x", label="Time")
                 ay2 = dpg.add_plot_axis(dpg.mvYAxis, tag="acc_y", label="g")
                 dpg.add_line_series([], [], label="Ax", parent=ay2, tag="ax_s")
                 dpg.add_line_series([], [], label="Ay", parent=ay2, tag="ay_s")
                 dpg.add_line_series([], [], label="Az", parent=ay2, tag="az_s")
-        # second row: Gyro, Quaternion, Gravity TS, spacer
+                dpg.add_plot_legend(parent=acc_tag)
+        # second row
         with dpg.table_row():
-            with dpg.plot(label="Gyro (°/s)", width=PLOT_WIDTH, height=PLOT_HEIGHT):
+            # Gyro timeseries
+            gyr_tag = "gyr_plot"
+            with dpg.plot(label="Gyro (°/s)", tag=gyr_tag, width=PLOT_WIDTH, height=PLOT_HEIGHT):
                 dpg.add_plot_axis(dpg.mvXAxis, tag="gyr_x", label="Time")
                 ay3 = dpg.add_plot_axis(dpg.mvYAxis, tag="gyr_y", label="°/s")
                 dpg.add_line_series([], [], label="Wx", parent=ay3, tag="wx_s")
                 dpg.add_line_series([], [], label="Wy", parent=ay3, tag="wy_s")
                 dpg.add_line_series([], [], label="Wz", parent=ay3, tag="wz_s")
-            with dpg.plot(label="Quaternion", width=PLOT_WIDTH, height=PLOT_HEIGHT):
+                dpg.add_plot_legend(parent=gyr_tag)
+            # Quaternion timeseries
+            quat_tag = "quat_plot"
+            with dpg.plot(label="Quaternion", tag=quat_tag, width=PLOT_WIDTH, height=PLOT_HEIGHT):
                 dpg.add_plot_axis(dpg.mvXAxis, tag="quat_x", label="Time")
                 ay4 = dpg.add_plot_axis(dpg.mvYAxis, tag="quat_y", label="Q")
                 dpg.add_line_series([], [], label="q0", parent=ay4, tag="q0_s")
                 dpg.add_line_series([], [], label="q1", parent=ay4, tag="q1_s")
                 dpg.add_line_series([], [], label="q2", parent=ay4, tag="q2_s")
                 dpg.add_line_series([], [], label="q3", parent=ay4, tag="q3_s")
-            with dpg.plot(label="Gravity XYZ", width=PLOT_WIDTH, height=PLOT_HEIGHT):
+                dpg.add_plot_legend(parent=quat_tag)
+            # Gravity timeseries
+            grav_tag = "grav_plot"
+            with dpg.plot(label="Gravity XYZ", tag=grav_tag, width=PLOT_WIDTH, height=PLOT_HEIGHT):
                 dpg.add_plot_axis(dpg.mvXAxis, tag="grav_x", label="Time")
                 ay5 = dpg.add_plot_axis(dpg.mvYAxis, tag="grav_y", label="g")
                 dpg.add_line_series([], [], label="g_x", parent=ay5, tag="gx_s")
                 dpg.add_line_series([], [], label="g_y", parent=ay5, tag="gy_s")
                 dpg.add_line_series([], [], label="g_z", parent=ay5, tag="gz_s")
+                dpg.add_plot_legend(parent=grav_tag)
             dpg.add_spacer(width=PLOT_WIDTH, height=PLOT_HEIGHT)
 
 # show viewport
@@ -172,8 +184,10 @@ start_time = time.time()
 iw, ih = PLOT_WIDTH, PLOT_HEIGHT
 view_mat = dpg.create_lookat_matrix([0,0,5],[0,0,0],[0,1,0])
 proj_mat = dpg.create_perspective_matrix(math.radians(45), iw/ih, 0.1, 100)
+# set clip spaces
 dpg.set_clip_space("ori_layer", 0, 0, iw, ih, -1.0, 1.0)
 dpg.set_clip_space("grav_layer", 0, 0, iw, ih, -1.0, 1.0)
+
 while dpg.is_dearpygui_running():
     update_buffers(ser, start_time)
     # update time-series
@@ -213,14 +227,11 @@ while dpg.is_dearpygui_running():
         xf_ori = proj_mat * view_mat * (rz * ry * rx)
         for axis in ["axis_x","axis_y","axis_z"]:
             dpg.apply_transform(axis, xf_ori)
-    
+
     # update gravity vector 3D
     if grav_x_buf:
-        gx, gy, gz = grav_x_buf[-1], grav_y_buf[-1], grav_z_buf[-1]
-        # compute rotation from Z-axis to gravity vector
-        v = np.array([gx, gy, gz])
+        v = np.array([grav_x_buf[-1], grav_y_buf[-1], grav_z_buf[-1]])
         v = v / np.linalg.norm(v)
-        # axis-angle
         axis = np.cross([0,0,1], v)
         if np.linalg.norm(axis) < 1e-6:
             axis = [1,0,0]
