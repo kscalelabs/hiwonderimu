@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import serial, struct, time, math
+import numpy as np
 from scipy.spatial.transform import Rotation
 import dearpygui.dearpygui as dpg
 
@@ -89,7 +90,7 @@ def update_buffers(ser, start_time):
             roll_buf.append(roll)
             pitch_buf.append(pitch)
             yaw_buf.append(yaw)
-        elif pid == 0x59:  # Quaternion
+        elif pid == 0x59:  # Quaternion + gravity
             Q0, Q1, Q2, Q3 = struct.unpack("<hhhh", payload)
             x, y, z, w = Q1/32768.0, Q2/32768.0, Q3/32768.0, Q0/32768.0
             quat_t_buf.append(t)
@@ -97,6 +98,7 @@ def update_buffers(ser, start_time):
             quat_q1_buf.append(x)
             quat_q2_buf.append(y)
             quat_q3_buf.append(z)
+            # project gravity in world frame
             r = Rotation.from_quat([x, y, z, w])
             gx, gy, gz = r.apply([0, 0, -1])
             grav_t_buf.append(t)
@@ -110,27 +112,33 @@ dpg.create_context()
 with dpg.window(label="IMU Visualization", width=2500, height=1250):
     with dpg.table(header_row=False, resizable=True, policy=dpg.mvTable_SizingStretchProp):
         for _ in range(4): dpg.add_table_column()
-        # first row: 3D, RPY, Accel, spacer
+        # first row: Orientation 3D, Gravity 3D, RPY, Accel
         with dpg.table_row():
+            # orientation axes
             with dpg.drawlist(width=PLOT_WIDTH, height=PLOT_HEIGHT):
-                with dpg.draw_layer(tag="layer", depth_clipping=True, perspective_divide=True, cull_mode=dpg.mvCullMode_None):
+                with dpg.draw_layer(tag="ori_layer", depth_clipping=True, perspective_divide=True, cull_mode=dpg.mvCullMode_None):
                     with dpg.draw_node(tag="axis_x"): dpg.draw_line([0,0,0],[1,0,0], color=[255,0,0,255], thickness=4)
                     with dpg.draw_node(tag="axis_y"): dpg.draw_line([0,0,0],[0,1,0], color=[0,255,0,255], thickness=4)
                     with dpg.draw_node(tag="axis_z"): dpg.draw_line([0,0,0],[0,0,1], color=[0,0,255,255], thickness=4)
+            # gravity vector
+            with dpg.drawlist(width=PLOT_WIDTH, height=PLOT_HEIGHT):
+                with dpg.draw_layer(tag="grav_layer", depth_clipping=True, perspective_divide=True, cull_mode=dpg.mvCullMode_None):
+                    with dpg.draw_node(tag="gvec"): dpg.draw_line([0,0,0],[0,0,-1], color=[255,255,0,255], thickness=4)
+            # RPY timeseries
             with dpg.plot(label="RPY (°)", width=PLOT_WIDTH, height=PLOT_HEIGHT):
                 dpg.add_plot_axis(dpg.mvXAxis, tag="rpy_x", label="Time")
                 ay = dpg.add_plot_axis(dpg.mvYAxis, tag="rpy_y", label="°")
                 dpg.add_line_series([], [], label="Roll", parent=ay, tag="roll_s")
                 dpg.add_line_series([], [], label="Pitch", parent=ay, tag="pitch_s")
                 dpg.add_line_series([], [], label="Yaw", parent=ay, tag="yaw_s")
+            # Accel timeseries
             with dpg.plot(label="Accel (g)", width=PLOT_WIDTH, height=PLOT_HEIGHT):
                 dpg.add_plot_axis(dpg.mvXAxis, tag="acc_x", label="Time")
                 ay2 = dpg.add_plot_axis(dpg.mvYAxis, tag="acc_y", label="g")
                 dpg.add_line_series([], [], label="Ax", parent=ay2, tag="ax_s")
                 dpg.add_line_series([], [], label="Ay", parent=ay2, tag="ay_s")
                 dpg.add_line_series([], [], label="Az", parent=ay2, tag="az_s")
-            dpg.add_spacer(width=PLOT_WIDTH, height=PLOT_HEIGHT)
-        # second row: Gyro, Quaternion, Gravity, spacer
+        # second row: Gyro, Quaternion, Gravity TS, spacer
         with dpg.table_row():
             with dpg.plot(label="Gyro (°/s)", width=PLOT_WIDTH, height=PLOT_HEIGHT):
                 dpg.add_plot_axis(dpg.mvXAxis, tag="gyr_x", label="Time")
@@ -153,7 +161,7 @@ with dpg.window(label="IMU Visualization", width=2500, height=1250):
                 dpg.add_line_series([], [], label="g_z", parent=ay5, tag="gz_s")
             dpg.add_spacer(width=PLOT_WIDTH, height=PLOT_HEIGHT)
 
-# Show viewport
+# show viewport
 dpg.create_viewport(title="IMU", width=2500, height=1250)
 dpg.setup_dearpygui()
 dpg.show_viewport()
@@ -164,10 +172,11 @@ start_time = time.time()
 iw, ih = PLOT_WIDTH, PLOT_HEIGHT
 view_mat = dpg.create_lookat_matrix([0,0,5],[0,0,0],[0,1,0])
 proj_mat = dpg.create_perspective_matrix(math.radians(45), iw/ih, 0.1, 100)
-dpg.set_clip_space("layer", 0, 0, iw, ih, -1.0, 1.0)
+dpg.set_clip_space("ori_layer", 0, 0, iw, ih, -1.0, 1.0)
+dpg.set_clip_space("grav_layer", 0, 0, iw, ih, -1.0, 1.0)
 while dpg.is_dearpygui_running():
     update_buffers(ser, start_time)
-    # update series
+    # update time-series
     dpg.set_value("roll_s",  [t_buf, roll_buf])
     dpg.set_value("pitch_s", [t_buf, pitch_buf])
     dpg.set_value("yaw_s",   [t_buf, yaw_buf])
@@ -184,6 +193,7 @@ while dpg.is_dearpygui_running():
     dpg.set_value("gx_s",    [grav_t_buf, grav_x_buf])
     dpg.set_value("gy_s",    [grav_t_buf, grav_y_buf])
     dpg.set_value("gz_s",    [grav_t_buf, grav_z_buf])
+
     # axis limits
     if t_buf:
         for tag in ["rpy_x","acc_x","quat_x","gyr_x","grav_x"]:
@@ -193,16 +203,35 @@ while dpg.is_dearpygui_running():
     dpg.set_axis_limits("gyr_y", -500, 500)
     dpg.set_axis_limits("quat_y", -1, 1)
     dpg.set_axis_limits("grav_y", -1, 1)
-    # update 3D orientation
+
+    # update 3D orientation axes
     if roll_buf:
-        rd,pd,yd = roll_buf[-1], pitch_buf[-1], yaw_buf[-1]
+        rd, pd, yd = roll_buf[-1], pitch_buf[-1], yaw_buf[-1]
         rz = dpg.create_rotation_matrix(math.radians(yd), [0,0,1])
         ry = dpg.create_rotation_matrix(math.radians(pd), [0,1,0])
         rx = dpg.create_rotation_matrix(math.radians(rd), [1,0,0])
-        xf = proj_mat * view_mat * (rz*ry*rx)
+        xf_ori = proj_mat * view_mat * (rz * ry * rx)
         for axis in ["axis_x","axis_y","axis_z"]:
-            dpg.apply_transform(axis, xf)
+            dpg.apply_transform(axis, xf_ori)
+    
+    # update gravity vector 3D
+    if grav_x_buf:
+        gx, gy, gz = grav_x_buf[-1], grav_y_buf[-1], grav_z_buf[-1]
+        # compute rotation from Z-axis to gravity vector
+        v = np.array([gx, gy, gz])
+        v = v / np.linalg.norm(v)
+        # axis-angle
+        axis = np.cross([0,0,1], v)
+        if np.linalg.norm(axis) < 1e-6:
+            axis = [1,0,0]
+        axis = axis / np.linalg.norm(axis)
+        angle = math.acos(np.clip(np.dot([0,0,1], v), -1, 1))
+        Rg = dpg.create_rotation_matrix(angle, axis.tolist())
+        xf_grav = proj_mat * view_mat * Rg
+        dpg.apply_transform("gvec", xf_grav)
+
     dpg.render_dearpygui_frame()
+
 # cleanup
 ser.close()
 dpg.destroy_context()
