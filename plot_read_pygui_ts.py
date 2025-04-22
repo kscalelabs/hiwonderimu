@@ -215,8 +215,8 @@ while dpg.is_dearpygui_running():
     dpg.set_axis_limits("rpy_y", -180, 180)
     dpg.set_axis_limits("acc_y", -2, 2)
     dpg.set_axis_limits("gyr_y", -500, 500)
-    dpg.set_axis_limits("quat_y", -1, 1)
-    dpg.set_axis_limits("grav_y", -1, 1)
+    dpg.set_axis_limits("quat_y", -1.1, 1.1)
+    dpg.set_axis_limits("grav_y", -1.1, 1.1)
 
     # update 3D orientation axes
     if roll_buf:
