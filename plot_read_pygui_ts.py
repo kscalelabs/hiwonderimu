@@ -11,8 +11,8 @@ SCALE_ANGLE = 180.0 / 32768.0
 SCALE_ACC   = 16.0   / 32768.0
 SCALE_GYRO  = 2000.0 / 32768.0
 MAX_POINTS = 200
-PLOT_WIDTH = 600
-PLOT_HEIGHT = 600
+PLOT_WIDTH = 500
+PLOT_HEIGHT = 500
 
 # --- Data buffers ------------------------------------------------------
 t_buf = []
