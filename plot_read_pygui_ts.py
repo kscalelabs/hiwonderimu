@@ -36,6 +36,8 @@ grav_t_buf = []
 grav_x_buf = []
 grav_y_buf = []
 grav_z_buf = []
+hz_t_buf = []
+hz_val_buf = []
 
 # --- Trimming helpers --------------------------------------------------
 def trim(buf):
@@ -47,7 +49,8 @@ def trim_all():
               acc_t_buf, acc_x_buf, acc_y_buf, acc_z_buf,
               gyro_t_buf, gyro_x_buf, gyro_y_buf, gyro_z_buf,
               quat_t_buf, quat_q0_buf, quat_q1_buf, quat_q2_buf, quat_q3_buf,
-              grav_t_buf, grav_x_buf, grav_y_buf, grav_z_buf]:
+              grav_t_buf, grav_x_buf, grav_y_buf, grav_z_buf,
+              hz_t_buf, hz_val_buf]:
         trim(B)
 
 # --- IMU interface -----------------------------------------------------
@@ -171,6 +174,13 @@ with dpg.window(label="IMU Visualization", width=2500, height=1250):
                 dpg.add_line_series([], [], label="g_y", parent=ay5, tag="gy_s")
                 dpg.add_line_series([], [], label="g_z", parent=ay5, tag="gz_s")
                 dpg.add_plot_legend(parent=grav_tag)
+            # Hz timeseries
+            hz_tag = "hz_plot"
+            with dpg.plot(label="IMU Rate (Hz)", tag=hz_tag, width=PLOT_WIDTH, height=PLOT_HEIGHT):
+                dpg.add_plot_axis(dpg.mvXAxis, tag="hz_x", label="Time")
+                ay6 = dpg.add_plot_axis(dpg.mvYAxis, tag="hz_y", label="Hz")
+                dpg.add_line_series([], [], label="Rate", parent=ay6, tag="hz_s")
+                dpg.add_plot_legend(parent=hz_tag)
             dpg.add_spacer(width=PLOT_WIDTH, height=PLOT_HEIGHT)
 
 # show viewport
@@ -188,8 +198,12 @@ proj_mat = dpg.create_perspective_matrix(math.radians(45), iw/ih, 0.1, 100)
 dpg.set_clip_space("ori_layer", 0, 0, iw, ih, -1.0, 1.0)
 dpg.set_clip_space("grav_layer", 0, 0, iw, ih, -1.0, 1.0)
 
+gvec_update_times = [] # Buffer to store gravity update timestamps
+
 while dpg.is_dearpygui_running():
     update_buffers(ser, start_time)
+    now = time.time() - start_time # Get current time relative to start
+
     # update time-series
     dpg.set_value("roll_s",  [t_buf, roll_buf])
     dpg.set_value("pitch_s", [t_buf, pitch_buf])
@@ -208,15 +222,32 @@ while dpg.is_dearpygui_running():
     dpg.set_value("gy_s",    [grav_t_buf, grav_y_buf])
     dpg.set_value("gz_s",    [grav_t_buf, grav_z_buf])
 
+    # Calculate Hz based on gravity vector updates
+    # --- Remove old timestamps (older than 2 seconds) ---
+    gvec_update_times = [t for t in gvec_update_times if t >= now - 2.0]
+    # --- Count updates in the last second ---
+    recent_updates = [t for t in gvec_update_times if t >= now - 1.0]
+    current_hz = len(recent_updates)
+    # --- Append to plot buffers ---
+    hz_t_buf.append(now)
+    hz_val_buf.append(current_hz)
+    # --- Update Hz plot series ---
+    dpg.set_value("hz_s",    [hz_t_buf, hz_val_buf])
+
     # axis limits
-    if t_buf:
-        for tag in ["rpy_x","acc_x","quat_x","gyr_x","grav_x"]:
+    common_x_axes = ["rpy_x","acc_x","quat_x","gyr_x","grav_x"]
+    if t_buf: # Use t_buf for most time axes
+        for tag in common_x_axes:
             dpg.set_axis_limits(tag, t_buf[0], t_buf[-1])
+    if hz_t_buf: # Use hz_t_buf specifically for the hz plot x-axis
+        dpg.set_axis_limits("hz_x", hz_t_buf[0], hz_t_buf[-1])
+
     dpg.set_axis_limits("rpy_y", -180, 180)
     dpg.set_axis_limits("acc_y", -2, 2)
     dpg.set_axis_limits("gyr_y", -500, 500)
     dpg.set_axis_limits("quat_y", -1.1, 1.1)
     dpg.set_axis_limits("grav_y", -1.1, 1.1)
+    dpg.set_axis_limits("hz_y", 0, 150) # Set Y limit for Hz plot (adjust if needed)
 
     # update 3D orientation axes
     if roll_buf:
@@ -240,6 +271,7 @@ while dpg.is_dearpygui_running():
         Rg = dpg.create_rotation_matrix(angle, axis.tolist())
         xf_grav = proj_mat * view_mat * Rg
         dpg.apply_transform("gvec", xf_grav)
+        gvec_update_times.append(now) # Record timestamp after update
 
     dpg.render_dearpygui_frame()
 
