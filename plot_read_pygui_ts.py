@@ -3,15 +3,17 @@ import serial, struct, time, math
 from scipy.spatial.transform import Rotation
 import dearpygui.dearpygui as dpg
 
-# --- IMU Serial & Buffers ------------------------------------------------
+# --- Constants ---------------------------------------------------------
 PORT = "/dev/ttyUSB0"
 BAUD = 9600
 SCALE_ANGLE = 180.0 / 32768.0
 SCALE_ACC   = 16.0   / 32768.0
 SCALE_GYRO  = 2000.0 / 32768.0
 MAX_POINTS = 200
+PLOT_WIDTH = 600
+PLOT_HEIGHT = 600
 
-# data buffers
+# --- Data buffers ------------------------------------------------------
 t_buf = []
 roll_buf = []
 pitch_buf = []
@@ -34,7 +36,7 @@ grav_x_buf = []
 grav_y_buf = []
 grav_z_buf = []
 
-# trim helper
+# --- Trimming helpers --------------------------------------------------
 def trim(buf):
     if len(buf) > MAX_POINTS:
         del buf[:-MAX_POINTS]
@@ -47,16 +49,16 @@ def trim_all():
               grav_t_buf, grav_x_buf, grav_y_buf, grav_z_buf]:
         trim(B)
 
-# open & configure IMU
+# --- IMU interface -----------------------------------------------------
 def open_imu(port, baud):
     ser = serial.Serial(port, baud, timeout=0.1)
     time.sleep(0.1)
     ser.reset_input_buffer()
-    ser.write(b'\xFF\xAA\x69\x88\xB5')  # unlock
+    ser.write(b'\xFF\xAA\x69\x88\xB5')  # unlock registers
     ser.write(b'\xFF\xAA\x02\x4E\x02')  # enable ACC, GYRO, ANGLE, QUAT
     return ser
 
-# parse packets
+# --- Packet parsing ----------------------------------------------------
 def update_buffers(ser, start_time):
     while ser.in_waiting >= 11:
         if ser.read(1) != b'\x55': continue
@@ -78,7 +80,7 @@ def update_buffers(ser, start_time):
             gyro_x_buf.append(Wx * SCALE_GYRO)
             gyro_y_buf.append(Wy * SCALE_GYRO)
             gyro_z_buf.append(Wz * SCALE_GYRO)
-        elif pid == 0x53:  # Euler
+        elif pid == 0x53:  # Euler angles
             RL, RH, PL, PH, YL, YH, _, _ = payload
             roll  = struct.unpack("<h", bytes([RL, RH]))[0] * SCALE_ANGLE
             pitch = struct.unpack("<h", bytes([PL, PH]))[0] * SCALE_ANGLE
@@ -89,80 +91,80 @@ def update_buffers(ser, start_time):
             yaw_buf.append(yaw)
         elif pid == 0x59:  # Quaternion
             Q0, Q1, Q2, Q3 = struct.unpack("<hhhh", payload)
+            x, y, z, w = Q1/32768.0, Q2/32768.0, Q3/32768.0, Q0/32768.0
             quat_t_buf.append(t)
-            x,y,z,w = Q1/32768.0, Q2/32768.0, Q3/32768.0, Q0/32768.0
             quat_q0_buf.append(w)
             quat_q1_buf.append(x)
             quat_q2_buf.append(y)
             quat_q3_buf.append(z)
-            r = Rotation.from_quat([x,y,z,w])
-            gx,gy,gz = r.apply([0,0,-1])
+            r = Rotation.from_quat([x, y, z, w])
+            gx, gy, gz = r.apply([0, 0, -1])
             grav_t_buf.append(t)
             grav_x_buf.append(gx)
             grav_y_buf.append(gy)
             grav_z_buf.append(gz)
     trim_all()
 
-# UI Setup
+# --- DearPyGui UI setup -----------------------------------------------
 dpg.create_context()
 with dpg.window(label="IMU Visualization", width=2500, height=1250):
     with dpg.table(header_row=False, resizable=True, policy=dpg.mvTable_SizingStretchProp):
         for _ in range(4): dpg.add_table_column()
         # first row: 3D, RPY, Accel, spacer
         with dpg.table_row():
-            with dpg.drawlist(width=600, height=600):
+            with dpg.drawlist(width=PLOT_WIDTH, height=PLOT_HEIGHT):
                 with dpg.draw_layer(tag="layer", depth_clipping=True, perspective_divide=True, cull_mode=dpg.mvCullMode_None):
                     with dpg.draw_node(tag="axis_x"): dpg.draw_line([0,0,0],[1,0,0], color=[255,0,0,255], thickness=4)
                     with dpg.draw_node(tag="axis_y"): dpg.draw_line([0,0,0],[0,1,0], color=[0,255,0,255], thickness=4)
                     with dpg.draw_node(tag="axis_z"): dpg.draw_line([0,0,0],[0,0,1], color=[0,0,255,255], thickness=4)
-            with dpg.plot(label="RPY (°)", height=300, width=600):
+            with dpg.plot(label="RPY (°)", width=PLOT_WIDTH, height=PLOT_HEIGHT):
                 dpg.add_plot_axis(dpg.mvXAxis, tag="rpy_x", label="Time")
-                ay=dpg.add_plot_axis(dpg.mvYAxis, tag="rpy_y", label="°")
-                dpg.add_line_series([],[],label="Roll",parent=ay,tag="roll_s")
-                dpg.add_line_series([],[],label="Pitch",parent=ay,tag="pitch_s")
-                dpg.add_line_series([],[],label="Yaw",parent=ay,tag="yaw_s")
-            with dpg.plot(label="Accel (g)", height=300, width=600):
+                ay = dpg.add_plot_axis(dpg.mvYAxis, tag="rpy_y", label="°")
+                dpg.add_line_series([], [], label="Roll", parent=ay, tag="roll_s")
+                dpg.add_line_series([], [], label="Pitch", parent=ay, tag="pitch_s")
+                dpg.add_line_series([], [], label="Yaw", parent=ay, tag="yaw_s")
+            with dpg.plot(label="Accel (g)", width=PLOT_WIDTH, height=PLOT_HEIGHT):
                 dpg.add_plot_axis(dpg.mvXAxis, tag="acc_x", label="Time")
-                ay2=dpg.add_plot_axis(dpg.mvYAxis, tag="acc_y", label="g")
-                dpg.add_line_series([],[],label="Ax",parent=ay2,tag="ax_s")
-                dpg.add_line_series([],[],label="Ay",parent=ay2,tag="ay_s")
-                dpg.add_line_series([],[],label="Az",parent=ay2,tag="az_s")
-            dpg.add_spacer(width=600, height=300)
+                ay2 = dpg.add_plot_axis(dpg.mvYAxis, tag="acc_y", label="g")
+                dpg.add_line_series([], [], label="Ax", parent=ay2, tag="ax_s")
+                dpg.add_line_series([], [], label="Ay", parent=ay2, tag="ay_s")
+                dpg.add_line_series([], [], label="Az", parent=ay2, tag="az_s")
+            dpg.add_spacer(width=PLOT_WIDTH, height=PLOT_HEIGHT)
         # second row: Gyro, Quaternion, Gravity, spacer
         with dpg.table_row():
-            with dpg.plot(label="Gyro (°/s)", height=300, width=600):
+            with dpg.plot(label="Gyro (°/s)", width=PLOT_WIDTH, height=PLOT_HEIGHT):
                 dpg.add_plot_axis(dpg.mvXAxis, tag="gyr_x", label="Time")
-                ay3=dpg.add_plot_axis(dpg.mvYAxis, tag="gyr_y", label="°/s")
-                dpg.add_line_series([],[],label="Wx",parent=ay3,tag="wx_s")
-                dpg.add_line_series([],[],label="Wy",parent=ay3,tag="wy_s")
-                dpg.add_line_series([],[],label="Wz",parent=ay3,tag="wz_s")
-            with dpg.plot(label="Quaternion", height=300, width=600):
+                ay3 = dpg.add_plot_axis(dpg.mvYAxis, tag="gyr_y", label="°/s")
+                dpg.add_line_series([], [], label="Wx", parent=ay3, tag="wx_s")
+                dpg.add_line_series([], [], label="Wy", parent=ay3, tag="wy_s")
+                dpg.add_line_series([], [], label="Wz", parent=ay3, tag="wz_s")
+            with dpg.plot(label="Quaternion", width=PLOT_WIDTH, height=PLOT_HEIGHT):
                 dpg.add_plot_axis(dpg.mvXAxis, tag="quat_x", label="Time")
-                ay4=dpg.add_plot_axis(dpg.mvYAxis, tag="quat_y", label="Q")
-                dpg.add_line_series([],[],label="q0",parent=ay4,tag="q0_s")
-                dpg.add_line_series([],[],label="q1",parent=ay4,tag="q1_s")
-                dpg.add_line_series([],[],label="q2",parent=ay4,tag="q2_s")
-                dpg.add_line_series([],[],label="q3",parent=ay4,tag="q3_s")
-            with dpg.plot(label="Gravity XYZ", height=300, width=600):
+                ay4 = dpg.add_plot_axis(dpg.mvYAxis, tag="quat_y", label="Q")
+                dpg.add_line_series([], [], label="q0", parent=ay4, tag="q0_s")
+                dpg.add_line_series([], [], label="q1", parent=ay4, tag="q1_s")
+                dpg.add_line_series([], [], label="q2", parent=ay4, tag="q2_s")
+                dpg.add_line_series([], [], label="q3", parent=ay4, tag="q3_s")
+            with dpg.plot(label="Gravity XYZ", width=PLOT_WIDTH, height=PLOT_HEIGHT):
                 dpg.add_plot_axis(dpg.mvXAxis, tag="grav_x", label="Time")
-                ay5=dpg.add_plot_axis(dpg.mvYAxis, tag="grav_y", label="g")
-                dpg.add_line_series([],[],label="g_x",parent=ay5,tag="gx_s")
-                dpg.add_line_series([],[],label="g_y",parent=ay5,tag="gy_s")
-                dpg.add_line_series([],[],label="g_z",parent=ay5,tag="gz_s")
-            dpg.add_spacer(width=600, height=300)
+                ay5 = dpg.add_plot_axis(dpg.mvYAxis, tag="grav_y", label="g")
+                dpg.add_line_series([], [], label="g_x", parent=ay5, tag="gx_s")
+                dpg.add_line_series([], [], label="g_y", parent=ay5, tag="gy_s")
+                dpg.add_line_series([], [], label="g_z", parent=ay5, tag="gz_s")
+            dpg.add_spacer(width=PLOT_WIDTH, height=PLOT_HEIGHT)
 
 # Show viewport
 dpg.create_viewport(title="IMU", width=2500, height=1250)
 dpg.setup_dearpygui()
 dpg.show_viewport()
 
-# Start serial and render loop
+# --- Main loop --------------------------------------------------------
 ser = open_imu(PORT, BAUD)
 start_time = time.time()
-iw, ih = 600, 600
+iw, ih = PLOT_WIDTH, PLOT_HEIGHT
 view_mat = dpg.create_lookat_matrix([0,0,5],[0,0,0],[0,1,0])
 proj_mat = dpg.create_perspective_matrix(math.radians(45), iw/ih, 0.1, 100)
-dpg.set_clip_space("layer",0,0,iw,ih,-1.0,1.0)
+dpg.set_clip_space("layer", 0, 0, iw, ih, -1.0, 1.0)
 while dpg.is_dearpygui_running():
     update_buffers(ser, start_time)
     # update series
