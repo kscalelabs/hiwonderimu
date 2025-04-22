@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import serial, struct, time, math
+from scipy.spatial.transform import Rotation
 import dearpygui.dearpygui as dpg
 
 # --- IMU Serial & Buffers ------------------------------------------------
@@ -28,6 +29,10 @@ quat_q0_buf = []
 quat_q1_buf = []
 quat_q2_buf = []
 quat_q3_buf = []
+grav_t_buf = []
+grav_x_buf = []
+grav_y_buf = []
+grav_z_buf = []
 
 # open & configure IMU (ACC, GYRO, ANGLE, QUAT)
 def open_imu(port, baud):
@@ -37,7 +42,7 @@ def open_imu(port, baud):
     # unlock registers
     ser.write(b'\xFF\xAA\x69\x88\xB5')
     # enable ACC(0x51), GYRO(0x52), ANGLE(0x53), QUAT(0x59)
-    ser.write(b'\xFF\xAA\x02\x4E\x02')  # mask bits 1,2,3,9
+    ser.write(b'\xFF\xAA\x02\x4E\x02')  # bits 1,2,3,9
     return ser
 
 # parse all pending packets into buffers
@@ -74,26 +79,38 @@ def update_buffers(ser, start_time):
         elif pid == 0x59:  # Quaternion
             Q0, Q1, Q2, Q3 = struct.unpack("<hhhh", payload)
             quat_t_buf.append(t)
-            quat_q0_buf.append(Q0 / 32768.0)
-            quat_q1_buf.append(Q1 / 32768.0)
-            quat_q2_buf.append(Q2 / 32768.0)
-            quat_q3_buf.append(Q3 / 32768.0)
-    # trim buffers
-    def trim(buf):
-        if len(buf) > MAX_POINTS:
-            del buf[0:len(buf)-MAX_POINTS]
+            # reorder to (x, y, z, w) for SciPy
+            x, y, z, w = Q1/32768.0, Q2/32768.0, Q3/32768.0, Q0/32768.0
+            quat_q0_buf.append(w)
+            quat_q1_buf.append(x)
+            quat_q2_buf.append(y)
+            quat_q3_buf.append(z)
+            # compute gravity projection in world frame
+            r = Rotation.from_quat([x, y, z, w])
+            grav = r.apply([0, 0, -1])
+            grav_t_buf.append(t)
+            grav_x_buf.append(grav[0])
+            grav_y_buf.append(grav[1])
+            grav_z_buf.append(grav[2])
+
+# trim buffers function
+def trim(buf):
+    if len(buf) > MAX_POINTS:
+        del buf[0:len(buf)-MAX_POINTS]
+# apply trim for all buffers
+def trim_all():
     for B in [t_buf, roll_buf, pitch_buf, yaw_buf,
               acc_t_buf, acc_x_buf, acc_y_buf, acc_z_buf,
               gyro_t_buf, gyro_x_buf, gyro_y_buf, gyro_z_buf,
-              quat_t_buf, quat_q0_buf, quat_q1_buf, quat_q2_buf, quat_q3_buf]:
+              quat_t_buf, quat_q0_buf, quat_q1_buf, quat_q2_buf, quat_q3_buf,
+              grav_t_buf, grav_x_buf, grav_y_buf, grav_z_buf]:
         trim(B)
 
 # --- UI Setup ---------------------------------------------------------
 dpg.create_context()
-with dpg.window(label="IMU Visualization", width=3000, height=620):
-    # table layout with 5 columns
+with dpg.window(label="IMU Visualization", width=4200, height=620):
     with dpg.table(header_row=False, resizable=True, policy=dpg.mvTable_SizingStretchProp):
-        for _ in range(5): dpg.add_table_column()
+        for _ in range(6): dpg.add_table_column()
         with dpg.table_row():
             # 3D orientation
             with dpg.drawlist(width=600, height=600):
@@ -130,9 +147,16 @@ with dpg.window(label="IMU Visualization", width=3000, height=620):
                 dpg.add_line_series([], [], label="q1", parent=ay4, tag="q1_s")
                 dpg.add_line_series([], [], label="q2", parent=ay4, tag="q2_s")
                 dpg.add_line_series([], [], label="q3", parent=ay4, tag="q3_s")
+            # Gravity projection
+            with dpg.plot(label="Gravity XYZ", height=600, width=600):
+                dpg.add_plot_axis(dpg.mvXAxis, tag="grav_x", label="Time")
+                ay5 = dpg.add_plot_axis(dpg.mvYAxis, tag="grav_y", label="g")
+                dpg.add_line_series([], [], label="g_x", parent=ay5, tag="gx_s")
+                dpg.add_line_series([], [], label="g_y", parent=ay5, tag="gy_s")
+                dpg.add_line_series([], [], label="g_z", parent=ay5, tag="gz_s")
 
 # Show viewport
-dpg.create_viewport(title="IMU", width=3000, height=620)
+dpg.create_viewport(title="IMU", width=4200, height=620)
 dpg.setup_dearpygui()
 dpg.show_viewport()
 
@@ -147,6 +171,7 @@ dpg.set_clip_space("layer", 0, 0, iw, ih, -1.0, 1.0)
 
 while dpg.is_dearpygui_running():
     update_buffers(ser, start_time)
+    trim_all()
     # update timeseries
     dpg.set_value("roll_s",  [t_buf, roll_buf])
     dpg.set_value("pitch_s", [t_buf, pitch_buf])
@@ -161,14 +186,18 @@ while dpg.is_dearpygui_running():
     dpg.set_value("q1_s",    [quat_t_buf, quat_q1_buf])
     dpg.set_value("q2_s",    [quat_t_buf, quat_q2_buf])
     dpg.set_value("q3_s",    [quat_t_buf, quat_q3_buf])
+    dpg.set_value("gx_s",    [grav_t_buf, grav_x_buf])
+    dpg.set_value("gy_s",    [grav_t_buf, grav_y_buf])
+    dpg.set_value("gz_s",    [grav_t_buf, grav_z_buf])
     # axis limits
     if t_buf:
-        for tag in ["rpy_x","acc_x","gyr_x","quat_x"]:
+        for tag in ["rpy_x","acc_x","gyr_x","quat_x","grav_x"]:
             dpg.set_axis_limits(tag, t_buf[0], t_buf[-1])
     dpg.set_axis_limits("rpy_y", -180, 180)
     dpg.set_axis_limits("acc_y", -2, 2)
     dpg.set_axis_limits("gyr_y", -500, 500)
     dpg.set_axis_limits("quat_y", -1, 1)
+    dpg.set_axis_limits("grav_y", -1, 1)
     # update 3D orientation
     if roll_buf:
         rd, pd, yd = roll_buf[-1], pitch_buf[-1], yaw_buf[-1]
